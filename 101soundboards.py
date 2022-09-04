@@ -1,27 +1,37 @@
 import requests
-import hashlib
 import bs4
 import queue
 from threading import Thread
 import json
 import multiprocessing
+import argparse
+from pathlib import Path
+import os
+
+HEADERS = {'User-Agent':  'Mozilla/5.0 (X11; Linux x86_64; rv:104.0) Gecko/20100101 Firefox/104.0'}
+
+BASE_URL = 'https://www.101soundboards.com'
+
+TARGETS = queue.Queue()
+
 
 def check_if_none(elem, name):
     if elem != None:
         return
-    
+
     print(f'[-] failed to locate {name}, exiting')
-    exit(-1)
+    exit(1)
+
 
 def find_sounds(url):
-    res = requests.get(url)
+    res = requests.get(url, headers=HEADERS)
 
     if res.status_code != 200:
-        print('[-] failed to fetch home page, quitting')
-        exit(-1)
+        print(f'[-] failed to fetch home page with status code {res.status_code}, quitting')
+        exit(1)
 
     soup = bs4.BeautifulSoup(res.text, 'html.parser')
-    scripts = soup.find_all("script")
+    scripts = soup.find_all('script')
     check_if_none(scripts, 'scripts')
 
     target = None
@@ -100,63 +110,67 @@ def find_sounds(url):
             'id': i['id'],
             'title': i['sound_transcript'],
             'url': i['sound_file_url']
-        })
+            })
 
     return res
 
-def download_sound(url, path, filename):
-    res = requests.get(url)
+def download_sound(url, filepath):
+    res = requests.get(BASE_URL + url, headers=HEADERS)
     if res.status_code != 200:
         print('[-] failed to download sound, quitting')
         exit(-1)
 
-    with open(path + '\\' + filename, 'wb') as f:
+    with open(filepath, 'wb') as f:
         f.write(res.content)
 
-targets = queue.Queue()
 
-def handle_sound(sound):
+def handle_sound(sound, output_directory):
     print(f'[+] downloading sound \'{sound["title"]}\' with id {sound["id"]}')
+    filepath = output_directory + \
+                os.path.sep + \
+                sound['title'] + '-' + str(sound['id']) + '.mp3'
+    download_sound(sound['url'], filepath)
 
-    filename = hashlib.sha256(str(sound["title"] + sound["id"]).encode()).hexdigest()
 
-    download_sound(sound['url'], path, filename + '.mp3')
-
-def worker():
+def worker(output_directory):
     while True:
-        i = targets.get()
+        i = TARGETS.get()
         if i is None:
             break
-        handle_sound(i)
-        targets.task_done()
+        handle_sound(i, output_directory)
+        TARGETS.task_done()
 
-#TODO: prompt user for thread count here?
-thread_count = multiprocessing.cpu_count() * 4
 
-threads = []
-for i in range(thread_count):
-    t = Thread(target=worker)
-    t.start()
-    threads.append(t)
+def main(args):
+    thread_count = multiprocessing.cpu_count() * 4
+    threads = []
+    for i in range(thread_count):
+        t = Thread(target=worker, args=[args.output_directory])
+        t.start()
+        threads.append(t)
 
-print(f'[+] successfully started {thread_count} worker threads')
+    print(f'[+] successfully started {thread_count} worker threads')
 
-url = input('[+] please enter the soundboard url [example: \'https://www.101soundboards.com/boards/27782-lazarbeam\']: ') #https://www.101soundboards.com/boards/27782-lazarbeam
+    Path(args.output_directory).mkdir(exist_ok=True)
+    sounds = find_sounds(args.URL)
+    print(f'[+] fetched {len(sounds)} sounds')
 
-#TODO: prompt user to input a folder here, currently just downloads to [cwd]/sounds
-path = 'sounds'
+    for i in sounds:
+        TARGETS.put(i)
 
-sounds = find_sounds(url)
-print(f'[+] fetched {len(sounds)} sounds')
+    TARGETS.join()
 
-for i in sounds:
-    targets.put(i)
+    for i in range(thread_count):
+        TARGETS.put(None)
+    for t in threads:
+        t.join()
 
-targets.join()
+    print('[+] successfully downloaded all songs')
 
-for i in range(thread_count):
-    targets.put(None)
-for t in threads:
-    t.join()
 
-print('[+] successfully downloaded all songs')
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='101soundboards downloader')
+    parser.add_argument('-d', '--output-directory', default='sounds')
+    parser.add_argument('URL', help='soundboard url (example: "https://www.101soundboards.com/boards/27782-lazarbeam")')
+    args = parser.parse_args()
+    main(args)
