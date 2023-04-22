@@ -45,8 +45,10 @@ def find_sounds(url):
     check_if_none(target, 'info script')
 
     target = str(target)
-
-    sound_list = json.loads(target[target.find('board_data_preload') + 21:-11])
+    trimmedTarget = str(target[target.find('board_data_inline') + 20:target.find('}]};') + 3])
+    #print(trimmedTarget)
+    
+    sound_list = json.loads(trimmedTarget)
     #TODO: extract properties at this point
     """
         "id": 27782,
@@ -109,7 +111,8 @@ def find_sounds(url):
         res.append({
             'id': i['id'],
             'title': i['sound_transcript'],
-            'url': i['sound_file_url']
+            'url': i['sound_file_url'],
+            'dumbass_iphone_prefix_duration': i['sound_file_pitch']
             })
 
     return res
@@ -129,7 +132,8 @@ def handle_sound(sound, output_directory):
     filepath = output_directory + \
                 os.path.sep + \
                 sound['title'] + '-' + str(sound['id']) + '.mp3'
-    download_sound(sound['url'], filepath)
+    download_sound(sound['url'], filepath + '_' + str(sound['dumbass_iphone_prefix_duration']))
+    print('dumbass prefix duration is: ' + str(float(sound['dumbass_iphone_prefix_duration']) / 10))
 
 
 def worker(output_directory):
